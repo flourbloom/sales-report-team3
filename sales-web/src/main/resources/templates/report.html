@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Angkor Mart · Monthly sales</title>
+    <style>
+        .error { color: firebrick; font-weight: bold; }
+        table { border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ccc; padding: 6px 12px; text-align: left; }
+    </style>
+</head>
+<body>
+    <form method="get" action="/report">
+        <label for="month">Month:</label>
+        <input type="text" id="month" name="month" th:value="${month}">
+        <label for="branch">Branch:</label>
+        <select id="branch" name="branch">
+            <option th:each="b : ${branches}" th:value="${b}" th:text="${b}" th:selected="${b == branch}"></option>
+        </select>
+        <button type="submit">Filter</button>
+    </form>
+
+    <p class="error" th:if="${error}" th:utext="${error}"></p>
+
+    <div th:if="${summary != null}">
+        <h1 th:text="'Angkor Mart · ' + ${month} + ' · ' + ${branch}">Angkor Mart · 2026-09 · PNH</h1>
+        <p th:text="'Revenue USD ' + ${summary.revenue()} + ' · receipts ' + ${summary.receipts()} + ' · basket USD ' + ${summary.averageBasket()} + ' · rejected rows ' + ${#lists.size(rejected)}"></p>
+
+        <h2>Revenue by Category</h2>
+        <table>
+            <thead>
+                <tr><th>Category</th><th>Revenue</th></tr>
+            </thead>
+            <tbody>
+                <tr th:each="entry : ${summary.revenueByCategory()}"><td th:text="${entry.key}">Electronics</td><td th:text="${entry.value}">3404.50</td></tr>
+            </tbody>
+        </table>
+
+        <h2>Top Products</h2>
+        <ul>
+            <li th:each="p : ${summary.topProducts()}"
+                th:text="${p.productName()} + ': USD ' + ${p.revenue()}">Product: USD 0.00</li>
+        </ul>
+    </div>
+</body>
+</html>
