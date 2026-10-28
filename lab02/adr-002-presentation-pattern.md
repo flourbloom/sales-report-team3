@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-23
-- **Deciders:** Team 3 (⟨names⟩)
+- **Deciders:** Team 3 (Pi Sereyvathanak, Pav Ratana, Kiv Sovannlyda, Seavhong Chea)
 
 ## Context
 

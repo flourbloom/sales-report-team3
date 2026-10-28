@@ -68,6 +68,7 @@ public final class ReportPresenter implements SalesModelListener {
                 t.productName(),
                 t.category(),
                 String.valueOf(t.quantity()),
+                money(t.discount()),
                 money(t.revenue()));
     }
 

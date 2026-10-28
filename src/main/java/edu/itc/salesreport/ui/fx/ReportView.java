@@ -42,6 +42,7 @@ public final class ReportView implements SalesModelListener, ErrorDisplay {
                 column("Product", SaleTransaction::productName),
                 column("Category", SaleTransaction::category),
                 column("Qty", t -> String.valueOf(t.quantity())),
+                column("Discount", t -> t.discount().toString()),
                 column("Revenue", t -> t.revenue().toString())
         ));
         
