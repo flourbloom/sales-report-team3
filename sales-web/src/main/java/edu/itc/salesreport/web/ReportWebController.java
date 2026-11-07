@@ -47,10 +47,12 @@ public class ReportWebController {
         page.addAttribute("branches", List.of("ALL", "PNH", "REP", "BTB"));
 
         var inputs = new Inputs(InputRules.month(month, clock), InputRules.branch(branch));
-        switch (inputs) {
-            case Inputs(Valid<YearMonth>(var m), Valid<String>(var b)) -> show(m, b, page);
-            case Inputs(Invalid<YearMonth>(var msg), _) -> page.addAttribute("error", msg);
-            case Inputs(_, Invalid<String>(var msg)) -> page.addAttribute("error", msg);
+        if (inputs.month() instanceof Valid<YearMonth> vm && inputs.branch() instanceof Valid<String> vb) {
+            show(vm.value(), vb.value(), page);
+        } else if (inputs.month() instanceof Invalid<YearMonth> inv) {
+            page.addAttribute("error", inv.message());
+        } else if (inputs.branch() instanceof Invalid<String> inv) {
+            page.addAttribute("error", inv.message());
         }
         return "report";
     }
