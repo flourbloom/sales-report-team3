@@ -3,12 +3,18 @@ package edu.itc.salesreport.ui;
 import edu.itc.salesreport.model.BranchSummary;
 import edu.itc.salesreport.model.ProductTotal;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.NumberFormat;
 import java.time.Clock;
 import java.time.YearMonth;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import javafx.beans.binding.Bindings;
 import javafx.beans.binding.BooleanBinding;
 import javafx.beans.binding.ObjectBinding;
@@ -96,10 +102,35 @@ public final class ReportViewModel {
         branchError = Bindings.createStringBinding(() -> "");
         validationMessage = Bindings.createStringBinding(() -> "");
         canGenerate = month.isNotNull().and(loading.not());
-        // TODO Task 2: sum of summaries' revenue, formatted "USD 1,234.50"
-        totalRevenue = Bindings.createObjectBinding(() -> BigDecimal.ZERO);
-        totalRevenueText = Bindings.createStringBinding(() -> "USD 0.00");
-        // TODO Task 2: bind visibleProducts' predicate to productFilter
+
+        NumberFormat currencyFormat = NumberFormat.getNumberInstance(Locale.US);
+        currencyFormat.setMinimumFractionDigits(2);
+        currencyFormat.setMaximumFractionDigits(2);
+        currencyFormat.setGroupingUsed(true);
+
+        totalRevenue = Bindings.createObjectBinding(() -> {
+            BigDecimal sum = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+            for (BranchSummary s : summaries) {
+                if (s != null && s.revenue() != null) {
+                    sum = sum.add(s.revenue());
+                }
+            }
+            return sum;
+        }, summaries);
+
+        totalRevenueText = Bindings.createStringBinding(
+                () -> "USD " + currencyFormat.format(totalRevenue.get()),
+                totalRevenue);
+
+        visibleProducts.predicateProperty().bind(Bindings.createObjectBinding(() -> {
+            String filter = productFilter.get();
+            if (filter == null || filter.isBlank()) {
+                return p -> true;
+            }
+            String term = filter.strip().toLowerCase(Locale.ROOT);
+            return p -> (p.productName() != null && p.productName().toLowerCase(Locale.ROOT).contains(term))
+                    || (p.sku() != null && p.sku().toLowerCase(Locale.ROOT).contains(term));
+        }, productFilter));
 
         generateCommand = new DelegateCommand(this::generate, canGenerate);
         cancelCommand = new DelegateCommand(this::cancel,
@@ -114,14 +145,79 @@ public final class ReportViewModel {
     }
 
     private void generate() {
-        // TODO Task 2: snapshot month and selectedBranches(), set loading,
-        // then jobs.submit(sink -> loadAll(...), listener); the listener
-        // fills summaries/products on success and resets loading.
-        // TODO Task 4: progress, cancelled(), failed() -> loadError
+        YearMonth m = month.get();
+        List<String> branches = selectedBranches();
+        if (m == null || branches.isEmpty()) {
+            return;
+        }
+        loading.set(true);
+        loadError.set("");
+        status.set("Loading...");
+        progress.set(0);
+
+        record LoadResult(List<BranchSummary> summaries, List<ProductTotal> products) {}
+
+        running = jobs.submit(sink -> {
+            List<BranchSummary> loadedSummaries = new ArrayList<>();
+            Map<String, ProductTotal> mergedProducts = new TreeMap<>();
+            long total = branches.size();
+            long count = 0;
+            for (String b : branches) {
+                if (sink.isCancelled()) {
+                    break;
+                }
+                BranchSummary s = source.load(m, b);
+                loadedSummaries.add(s);
+                if (s.topProducts() != null) {
+                    for (ProductTotal pt : s.topProducts()) {
+                        mergedProducts.merge(pt.sku(), pt, (p1, p2) -> new ProductTotal(
+                                p1.sku(),
+                                p1.productName(),
+                                p1.revenue().add(p2.revenue()),
+                                p1.quantity() + p2.quantity()));
+                    }
+                }
+                count++;
+                sink.update(count, total);
+            }
+            List<ProductTotal> top = mergedProducts.values().stream()
+                    .sorted(Comparator.comparing(ProductTotal::revenue).reversed())
+                    .limit(10)
+                    .toList();
+            return new LoadResult(loadedSummaries, top);
+        }, new BackgroundJobs.JobListener<LoadResult>() {
+            @Override
+            public void progress(double fraction) {
+                progress.set(fraction);
+            }
+
+            @Override
+            public void succeeded(LoadResult value) {
+                summaries.setAll(value.summaries());
+                products.setAll(value.products());
+                status.set("Loaded %d branch(es) for %s.".formatted(value.summaries().size(), m));
+                loading.set(false);
+            }
+
+            @Override
+            public void failed(Throwable error) {
+                loadError.set("Load failed: " + error.getMessage());
+                status.set("Load failed: " + error.getMessage());
+                loading.set(false);
+            }
+
+            @Override
+            public void cancelled() {
+                status.set("Cancelled.");
+                loading.set(false);
+            }
+        });
     }
 
     private void cancel() {
-        // TODO Task 4: cancel the running job, if any
+        if (running != null) {
+            running.cancel();
+        }
     }
 
     // ---- accessors: read-only types for everything the view must not set
