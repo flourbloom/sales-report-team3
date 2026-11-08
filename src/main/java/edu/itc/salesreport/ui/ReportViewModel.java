@@ -3,18 +3,16 @@ package edu.itc.salesreport.ui;
 import edu.itc.salesreport.model.BranchSummary;
 import edu.itc.salesreport.model.ProductTotal;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.text.NumberFormat;
 import java.time.Clock;
 import java.time.YearMonth;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.TreeMap;
+import java.util.concurrent.CancellationException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javafx.beans.Observable;
@@ -41,7 +39,7 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 
-/** Task 1 skeleton: state, commands and ports. javafx.base only. */
+/** Fully integrated ViewModel for Tasks 1 through 4. */
 public final class ReportViewModel {
 
     public static final List<String> BRANCHES = List.of("PNH", "REP", "BTB");
@@ -51,32 +49,21 @@ public final class ReportViewModel {
     private final Clock clock;
 
     // ---- input state: two-way bound by the view
-    private final ObjectProperty<YearMonth> month =
-            new SimpleObjectProperty<>(this, "month");
-    private final Map<String, BooleanProperty> branchSelected =
-            new LinkedHashMap<>();
-    private final StringProperty productFilter =
-            new SimpleStringProperty(this, "productFilter", "");
+    private final ObjectProperty<YearMonth> month = new SimpleObjectProperty<>(this, "month");
+    private final Map<String, BooleanProperty> branchSelected = new LinkedHashMap<>();
+    private final StringProperty productFilter = new SimpleStringProperty(this, "productFilter", "");
 
     // ---- output state: one-way bound by the view
-    private final ObservableList<YearMonth> monthChoices =
-            FXCollections.observableArrayList();
-    private final ObservableList<BranchSummary> summaries =
-            FXCollections.observableArrayList();
-    private final ObservableList<ProductTotal> products =
-            FXCollections.observableArrayList();
-    private final FilteredList<ProductTotal> visibleProducts =
-            new FilteredList<>(products);
-    private final ReadOnlyBooleanWrapper loading =
-            new ReadOnlyBooleanWrapper(this, "loading", false);
-    private final ReadOnlyDoubleWrapper progress =
-            new ReadOnlyDoubleWrapper(this, "progress", 0);
-    private final ReadOnlyStringWrapper status =
-            new ReadOnlyStringWrapper(this, "status", "Choose a month.");
-    private final ReadOnlyStringWrapper loadError =
-            new ReadOnlyStringWrapper(this, "loadError", "");
+    private final ObservableList<YearMonth> monthChoices = FXCollections.observableArrayList();
+    private final ObservableList<BranchSummary> summaries = FXCollections.observableArrayList();
+    private final ObservableList<ProductTotal> products = FXCollections.observableArrayList();
+    private final FilteredList<ProductTotal> visibleProducts = new FilteredList<>(products);
+    private final ReadOnlyBooleanWrapper loading = new ReadOnlyBooleanWrapper(this, "loading", false);
+    private final ReadOnlyDoubleWrapper progress = new ReadOnlyDoubleWrapper(this, "progress", 0);
+    private final ReadOnlyStringWrapper status = new ReadOnlyStringWrapper(this, "status", "Choose a month.");
+    private final ReadOnlyStringWrapper loadError = new ReadOnlyStringWrapper(this, "loadError", "");
 
-    // ---- computed state (Task 3 replaces the placeholders)
+    // ---- computed state
     private final StringBinding monthError;
     private final StringBinding branchError;
     private final StringBinding validationMessage;
@@ -88,11 +75,11 @@ public final class ReportViewModel {
     private final Command cancelCommand;
     private BackgroundJobs.JobHandle running;
 
-    public ReportViewModel(SummarySource source, BackgroundJobs jobs,
-                           Clock clock) {
+    public ReportViewModel(SummarySource source, BackgroundJobs jobs, Clock clock) {
         this.source = Objects.requireNonNull(source);
         this.jobs = Objects.requireNonNull(jobs);
         this.clock = Objects.requireNonNull(clock);
+        
         YearMonth now = YearMonth.now(clock);
         for (int i = 0; i < 12; i++) {
             monthChoices.add(now.minusMonths(i));
@@ -100,62 +87,52 @@ public final class ReportViewModel {
         for (String b : BRANCHES) {
             branchSelected.put(b, new SimpleBooleanProperty(this, b, true));
         }
+
+        // Task 3: Validation properties
         Observable[] flags = branchSelected.values().toArray(Observable[]::new);
-        monthError = Bindings.createStringBinding(
-                () -> checkMonth(month.get()), month);
-        branchError = Bindings.createStringBinding(
-                () -> branchSelected.values().stream().anyMatch(ObservableBooleanValue::get) ? "" : "Select at least one branch.",
-                flags);
+        
+        monthError = Bindings.createStringBinding(() -> checkMonth(month.get()), month);
+        
+        branchError = Bindings.createStringBinding(() -> {
+            boolean anySelected = branchSelected.values().stream().anyMatch(BooleanProperty::get);
+            return anySelected ? "" : "Select at least one branch.";
+        }, flags);
+
         validationMessage = Bindings.createStringBinding(
                 () -> Stream.of(monthError.get(), branchError.get())
                         .filter(s -> !s.isEmpty())
                         .collect(Collectors.joining(" ")),
                 monthError, branchError);
+
         BooleanBinding valid = monthError.isEmpty().and(branchError.isEmpty());
         canGenerate = valid.and(loading.not());
 
-        NumberFormat currencyFormat = NumberFormat.getNumberInstance(Locale.US);
-        currencyFormat.setMinimumFractionDigits(2);
-        currencyFormat.setMaximumFractionDigits(2);
-        currencyFormat.setGroupingUsed(true);
+        // Task 2: Computed properties (total revenue and product filtering)
+        totalRevenue = Bindings.createObjectBinding(() -> 
+                summaries.stream()
+                         .map(BranchSummary::revenue)
+                         .reduce(BigDecimal.ZERO, BigDecimal::add), 
+                summaries);
 
-        totalRevenue = Bindings.createObjectBinding(() -> {
-            BigDecimal sum = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-            for (BranchSummary s : summaries) {
-                if (s != null && s.revenue() != null) {
-                    sum = sum.add(s.revenue());
-                }
-            }
-            return sum;
-        }, summaries);
-
-        totalRevenueText = Bindings.createStringBinding(
-                () -> "USD " + currencyFormat.format(totalRevenue.get()),
-                totalRevenue);
+        totalRevenueText = Bindings.createStringBinding(() -> {
+            NumberFormat format = NumberFormat.getCurrencyInstance(Locale.US);
+            return format.format(totalRevenue.get()).replace("$", "USD ");
+        }, totalRevenue);
 
         visibleProducts.predicateProperty().bind(Bindings.createObjectBinding(() -> {
-            String filter = productFilter.get();
-            if (filter == null || filter.isBlank()) {
-                return p -> true;
-            }
-            String term = filter.strip().toLowerCase(Locale.ROOT);
-            return p -> (p.productName() != null && p.productName().toLowerCase(Locale.ROOT).contains(term))
-                    || (p.sku() != null && p.sku().toLowerCase(Locale.ROOT).contains(term));
+            String filter = productFilter.get().trim().toLowerCase();
+            if (filter.isEmpty()) return product -> true;
+            return product -> product.productName().toLowerCase().contains(filter) ||
+                              product.sku().toLowerCase().contains(filter);
         }, productFilter));
 
         generateCommand = new DelegateCommand(this::generate, canGenerate);
-        cancelCommand = new DelegateCommand(this::cancel,
-                loading.getReadOnlyProperty());
+        cancelCommand = new DelegateCommand(this::cancel, loading.getReadOnlyProperty());
     }
 
     private String checkMonth(YearMonth m) {
-        if (m == null) {
-            return "Choose a month.";
-        }
-        YearMonth today = YearMonth.now(clock);
-        if (m.isAfter(today)) {
-            return "Month " + m + " is in the future.";
-        }
+        if (m == null) return "Choose a month.";
+        if (m.isAfter(YearMonth.now(clock))) return "Month " + m + " is in the future.";
         return "";
     }
 
@@ -166,74 +143,62 @@ public final class ReportViewModel {
                 .toList();
     }
 
-    private void generate() {
-        YearMonth m = month.get();
-        List<String> branches = selectedBranches();
-        if (m == null || branches.isEmpty()) {
-            return;
+    private List<BranchSummary> loadAll(YearMonth m, List<String> branches, BackgroundJobs.ProgressSink sink) throws Exception {
+        List<BranchSummary> result = new ArrayList<>();
+        for (int i = 0; i < branches.size(); i++) {
+            if (sink.isCancelled()) {
+                throw new CancellationException();
+            }
+            result.add(source.load(m, branches.get(i)));
+            sink.update(i + 1, branches.size());
         }
+        return result;
+    }
+
+    private void generate() {
+        YearMonth snapMonth = month.get();
+        List<String> snapBranches = selectedBranches();
+
         loading.set(true);
         loadError.set("");
         status.set("Loading...");
         progress.set(0);
 
-        record LoadResult(List<BranchSummary> summaries, List<ProductTotal> products) {}
-
-        running = jobs.submit(sink -> {
-            List<BranchSummary> loadedSummaries = new ArrayList<>();
-            Map<String, ProductTotal> mergedProducts = new TreeMap<>();
-            long total = branches.size();
-            long count = 0;
-            for (String b : branches) {
-                if (sink.isCancelled()) {
-                    break;
+        running = jobs.submit(
+            sink -> loadAll(snapMonth, snapBranches, sink),
+            new BackgroundJobs.JobListener<List<BranchSummary>>() {
+                @Override
+                public void progress(double fraction) {
+                    progress.set(fraction);
                 }
-                BranchSummary s = source.load(m, b);
-                loadedSummaries.add(s);
-                if (s.topProducts() != null) {
-                    for (ProductTotal pt : s.topProducts()) {
-                        mergedProducts.merge(pt.sku(), pt, (p1, p2) -> new ProductTotal(
-                                p1.sku(),
-                                p1.productName(),
-                                p1.revenue().add(p2.revenue()),
-                                p1.quantity() + p2.quantity()));
-                    }
+
+                @Override
+                public void succeeded(List<BranchSummary> result) {
+                    summaries.setAll(result);
+                    
+                    List<ProductTotal> mergedProducts = result.stream()
+                        .flatMap(s -> s.topProducts().stream())
+                        .collect(Collectors.toList());
+                    products.setAll(mergedProducts);
+                    
+                    status.set("Loaded " + result.size() + " branch(es) for " + snapMonth + ".");
+                    loading.set(false);
                 }
-                count++;
-                sink.update(count, total);
-            }
-            List<ProductTotal> top = mergedProducts.values().stream()
-                    .sorted(Comparator.comparing(ProductTotal::revenue).reversed())
-                    .limit(10)
-                    .toList();
-            return new LoadResult(loadedSummaries, top);
-        }, new BackgroundJobs.JobListener<LoadResult>() {
-            @Override
-            public void progress(double fraction) {
-                progress.set(fraction);
-            }
 
-            @Override
-            public void succeeded(LoadResult value) {
-                summaries.setAll(value.summaries());
-                products.setAll(value.products());
-                status.set("Loaded %d branch(es) for %s.".formatted(value.summaries().size(), m));
-                loading.set(false);
-            }
+                @Override
+                public void failed(Throwable error) {
+                    loadError.set(error.getMessage());
+                    status.set("Load failed, previous data kept.");
+                    loading.set(false);
+                }
 
-            @Override
-            public void failed(Throwable error) {
-                loadError.set(error.getMessage() != null ? error.getMessage() : error.toString());
-                status.set("Load failed, previous data kept.");
-                loading.set(false);
+                @Override
+                public void cancelled() {
+                    status.set("Cancelled, previous data kept.");
+                    loading.set(false);
+                }
             }
-
-            @Override
-            public void cancelled() {
-                status.set("Cancelled.");
-                loading.set(false);
-            }
-        });
+        );
     }
 
     private void cancel() {
@@ -271,18 +236,10 @@ public final class ReportViewModel {
     }
     public StringExpression monthErrorProperty() { return monthError; }
     public StringExpression branchErrorProperty() { return branchError; }
-    public StringExpression validationMessageProperty() {
-        return validationMessage;
-    }
+    public StringExpression validationMessageProperty() { return validationMessage; }
     public ObservableBooleanValue canGenerateProperty() { return canGenerate; }
-    public ObservableObjectValue<BigDecimal> totalRevenueProperty() {
-        return totalRevenue;
-    }
-    public StringExpression totalRevenueTextProperty() {
-        return totalRevenueText;
-    }
-
-    
+    public ObservableObjectValue<BigDecimal> totalRevenueProperty() { return totalRevenue; }
+    public StringExpression totalRevenueTextProperty() { return totalRevenueText; }
     public Command generateCommand() { return generateCommand; }
     public Command cancelCommand() { return cancelCommand; }
 }
