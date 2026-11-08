@@ -33,6 +33,26 @@ public final class ReportView {
         month.setEditable(true);
         month.setConverter(new YearMonthConverter());
         month.valueProperty().bindBidirectional(vm.monthProperty());
+        month.styleProperty().bind(Bindings
+                .when(vm.monthErrorProperty().isEmpty())
+                .then("").otherwise("-fx-border-color: crimson;"));
+
+        month.getEditor().setOnAction(e -> {
+            try {
+                month.setValue(month.getConverter().fromString(month.getEditor().getText()));
+            } catch (Exception ex) {
+                month.setValue(null);
+            }
+        });
+        month.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
+            if (!isNowFocused) {
+                try {
+                    month.setValue(month.getConverter().fromString(month.getEditor().getText()));
+                } catch (Exception ex) {
+                    month.setValue(null);
+                }
+            }
+        });
 
         HBox filters = new HBox(8, new Label("Month"), month);
         for (String b : ReportViewModel.BRANCHES) {
@@ -56,12 +76,14 @@ public final class ReportView {
         bar.visibleProperty().bind(vm.loadingProperty());
 
         Label validation = new Label();
+        validation.setStyle("-fx-text-fill: firebrick;");
         validation.textProperty().bind(vm.validationMessageProperty());
 
         Label status = new Label();
         status.textProperty().bind(vm.statusProperty());
 
         Label error = new Label();
+        error.setStyle("-fx-text-fill: crimson;");
         error.textProperty().bind(vm.loadErrorProperty());
 
         Label total = new Label();

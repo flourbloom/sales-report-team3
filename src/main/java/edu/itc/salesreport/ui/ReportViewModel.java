@@ -15,6 +15,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import javafx.beans.Observable;
 import javafx.beans.binding.Bindings;
 import javafx.beans.binding.BooleanBinding;
 import javafx.beans.binding.ObjectBinding;
@@ -97,11 +100,19 @@ public final class ReportViewModel {
         for (String b : BRANCHES) {
             branchSelected.put(b, new SimpleBooleanProperty(this, b, true));
         }
-        // TODO Task 3: real rules (future month, empty branch selection)
-        monthError = Bindings.createStringBinding(() -> "", month);
-        branchError = Bindings.createStringBinding(() -> "");
-        validationMessage = Bindings.createStringBinding(() -> "");
-        canGenerate = month.isNotNull().and(loading.not());
+        Observable[] flags = branchSelected.values().toArray(Observable[]::new);
+        monthError = Bindings.createStringBinding(
+                () -> checkMonth(month.get()), month);
+        branchError = Bindings.createStringBinding(
+                () -> branchSelected.values().stream().anyMatch(ObservableBooleanValue::get) ? "" : "Select at least one branch.",
+                flags);
+        validationMessage = Bindings.createStringBinding(
+                () -> Stream.of(monthError.get(), branchError.get())
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.joining(" ")),
+                monthError, branchError);
+        BooleanBinding valid = monthError.isEmpty().and(branchError.isEmpty());
+        canGenerate = valid.and(loading.not());
 
         NumberFormat currencyFormat = NumberFormat.getNumberInstance(Locale.US);
         currencyFormat.setMinimumFractionDigits(2);
@@ -135,6 +146,17 @@ public final class ReportViewModel {
         generateCommand = new DelegateCommand(this::generate, canGenerate);
         cancelCommand = new DelegateCommand(this::cancel,
                 loading.getReadOnlyProperty());
+    }
+
+    private String checkMonth(YearMonth m) {
+        if (m == null) {
+            return "Choose a month.";
+        }
+        YearMonth today = YearMonth.now(clock);
+        if (m.isAfter(today)) {
+            return "Month " + m + " is in the future.";
+        }
+        return "";
     }
 
     public List<String> selectedBranches() {
@@ -201,8 +223,8 @@ public final class ReportViewModel {
 
             @Override
             public void failed(Throwable error) {
-                loadError.set("Load failed: " + error.getMessage());
-                status.set("Load failed: " + error.getMessage());
+                loadError.set(error.getMessage() != null ? error.getMessage() : error.toString());
+                status.set("Load failed, previous data kept.");
                 loading.set(false);
             }
 

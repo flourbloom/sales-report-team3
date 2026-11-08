@@ -4,23 +4,24 @@
 
 The table below breaks down every control interaction, condition, and operation from the Lab-02 `ReportController` (Starter B), identifying its concern and assigning its new owner in MVVM:
 
-| Code / Operation                                             | Concern                                  | New Owner             | Rationale                                                                           |
-| :----------------------------------------------------------- | :--------------------------------------- | :-------------------- | :---------------------------------------------------------------------------------- |
-| `month.getValue()`                                         | User input (selected month)              | **ViewModel**   | Exposed as `monthProperty()` (`ObjectProperty<YearMonth>`) for two-way binding. |
-| `if (m == null)`                                           | Validation logic                         | **ViewModel**   | Evaluated reactively in `monthError` and `canGenerate` bindings.                |
-| `status.setText("Choose a month.")`                        | Presentation state / validation feedback | **ViewModel**   | Represented by `statusProperty()` and `validationMessageProperty()`.            |
-| `box.isSelected()`                                         | User input (branch toggle)               | **ViewModel**   | Exposed per branch via `branchSelectedProperty(branch)` (`BooleanProperty`).    |
-| `if (box.isSelected())`                                    | Input filtering / selection check        | **ViewModel**   | Managed in `selectedBranches()` query on the branch selection properties.         |
-| `engine.summarizeBranch(m, branch, dataDir)`               | Sales calculations & data retrieval      | **Model**       | Model concern decoupled through the `SummarySource` port interface.               |
-| `new ArrayList<>()`                                       | Execution model & threading              | **ViewModel**  | Offloaded from FX Application Thread to `BackgroundJobs` port.                    |
-| `catch (IOException e)`                                    | Error handling                           | **ViewModel**   | Handled in `JobListener.failed()` callback, updating `loadErrorProperty()`.     |
-| `status.setText("Load failed: " + e.getMessage())`         | Error presentation                       | **ViewModel**   | Exposed to the view via `loadErrorProperty()` and `statusProperty()`.           |
-| `table.getItems().setAll(rows)`                            | Displaying summary data                  | **View**       | ViewModel exposes `summaries()`; View binds `TableView.itemsProperty()`.        |
-| `status.setText("Loaded " + rows.size() + " branch(es).")` | Completion feedback message              | **View**        | Formatted and updated in `statusProperty()` upon successful load.                 |
+| Code / Operation                                             | Concern                                  | New Owner                            | Rationale                                                                           |
+| :----------------------------------------------------------- | :--------------------------------------- | :----------------------------------- | :---------------------------------------------------------------------------------- |
+| `month.getValue()`                                         | User input (selected month)              | **ViewModel**                  | Exposed as `monthProperty()` (`ObjectProperty<YearMonth>`) for two-way binding. |
+| `if (m == null)`                                           | Validation logic                         | **ViewModel**                  | Evaluated reactively in `monthError` and `canGenerate` bindings.                |
+| `status.setText("Choose a month.")`                        | Presentation state / validation feedback | **ViewModel**                  | Represented by `statusProperty()` and `validationMessageProperty()`.            |
+| `box.isSelected()`                                         | User input (branch toggle)               | **ViewModel**                  | Exposed per branch via `branchSelectedProperty(branch)` (`BooleanProperty`).    |
+| `if (box.isSelected())`                                    | Input filtering / selection check        | **ViewModel**                  | Managed in `selectedBranches()` query on the branch selection properties.         |
+| `box.getText()`                                            | Branch identifier reference              | **ViewModel** / **View** | Constant branch keys defined in `ReportViewModel.BRANCHES`.                       |
+| `engine.summarizeBranch(m, branch, dataDir)`               | Sales calculations & data retrieval      | **Model**                      | Model concern decoupled through the `SummarySource` port interface.               |
+| `new ArrayList<>()` / thread execution                     | Execution model & threading              | **ViewModel** / **Port** | Offloaded from FX Application Thread to `BackgroundJobs` port.                    |
+| `catch (IOException e)`                                    | Error handling                           | **ViewModel**                  | Handled in `JobListener.failed()` callback, updating `loadErrorProperty()`.     |
+| `status.setText("Load failed: " + e.getMessage())`         | Error presentation                       | **ViewModel**                  | Exposed to the view via `loadErrorProperty()` and `statusProperty()`.           |
+| `table.getItems().setAll(rows)`                            | Displaying summary data                  | **View** / **ViewModel** | ViewModel exposes `summaries()`; View binds `TableView.itemsProperty()`.        |
+| `status.setText("Loaded " + rows.size() + " branch(es).")` | Completion feedback message              | **ViewModel**                  | Formatted and updated in `statusProperty()` upon successful load.                 |
 
 ---
 
-## 2. ViewModel Members
+## 2. ViewModel Members Specification
 
 The members of `ReportViewModel` are structured into input, output, computed properties, and commands:
 
@@ -48,12 +49,12 @@ The members of `ReportViewModel` are structured into input, output, computed pro
 
 | Member                | Exposed Type                          | View May Write? | Description                                                                   |
 | :-------------------- | :------------------------------------ | :-------------: | :---------------------------------------------------------------------------- |
-| `monthError`        | `StringBinding`                     |  **No**  | Error string if month is missing or in the future.                            |
-| `branchError`       | `StringBinding`                     |  **No**  | Error string if no branches are selected (*"Select at least one branch."*). |
-| `validationMessage` | `StringBinding`                     |  **No**  | Combined validation string (`monthError` or `branchError`).               |
-| `canGenerate`       | `BooleanBinding`                    |  **No**  | `true` when input is valid and `loading` is false.                        |
+| `monthError`        | `StringExpression`                  |  **No**  | Error string if month is missing or in the future.                            |
+| `branchError`       | `StringExpression`                  |  **No**  | Error string if no branches are selected (*"Select at least one branch."*). |
+| `validationMessage` | `StringExpression`                  |  **No**  | Combined validation string (`monthError` or `branchError`).               |
+| `canGenerate`       | `ObservableBooleanValue`            |  **No**  | `true` when input is valid and `loading` is false.                        |
 | `totalRevenue`      | `ObservableObjectValue<BigDecimal>` |  **No**  | Sum of revenue across all loaded summaries.                                   |
-| `totalRevenueText`  | `StringBinding`                     |  **No**  | Formatted chain revenue string (e.g. `"USD 12,345.60"`).                    |
+| `totalRevenueText`  | `StringExpression`                  |  **No**  | Formatted chain revenue string (e.g. `"USD 12,345.60"`).                    |
 
 ### Commands (Executable Actions)
 
@@ -143,3 +144,40 @@ classDiagram
   ```bash
   mvn -q compile
   ```
+
+---
+
+## 6. Screen State Machine
+
+### State Diagram (`stateDiagram-v2`)
+
+```mermaid
+stateDiagram-v2
+    [*] --> Incomplete
+
+    Incomplete --> Invalid : future month or no branch
+    Incomplete --> Ready : month ok and a branch ticked
+
+    Invalid --> Ready : input fixed
+    Ready --> Invalid : input changed
+
+    Ready --> Loading : generate
+    Loading --> Ready : cancelled
+
+    Loading --> Loaded : succeeded
+    Loading --> Failed : failed
+
+    Loaded --> Loading : generate again
+    Failed --> Loading : generate again
+```
+
+### Property Values per State
+
+| State                | `month`                         | `branchSelected` | `monthError`                              | `branchError`                             | `validationMessage` | `canGenerate` | `loading` |    `progress`    | `status`                             | `loadError`     | `summaries`       |
+| :------------------- | :-------------------------------- | :----------------- | :------------------------------------------ | :------------------------------------------ | :-------------------- | :-------------: | :---------: | :----------------: | :------------------------------------- | :---------------- | :------------------ |
+| **Incomplete** | `null`                          | At least 1 ticked  | `"Choose a month."`                       | `""`                                      | `"Choose a month."` |    `false`    |  `false`  |      `0.0`      | `"Choose a month."`                  | `""`            | Empty (or previous) |
+| **Invalid**    | Future month or unselected branch | Future or 0 ticked | `"Month ... is in the future."` or `""` | `"Select at least one branch."` or `""` | Non-empty message     |    `false`    |  `false`  |      Previous      | Previous                               | Previous          | Previous kept       |
+| **Ready**      | Valid month ($\le$ today)       | At least 1 ticked  | `""`                                      | `""`                                      | `""`                |    `true`    |  `false`  |      Previous      | Previous                               | Previous          | Previous            |
+| **Loading**    | Valid month                       | At least 1 ticked  | `""`                                      | `""`                                      | `""`                |    `false`    |  `true`  | `0.0` .. `1.0` | `"Loading..."`                       | `""`            | Previous kept       |
+| **Loaded**     | Valid month                       | At least 1 ticked  | `""`                                      | `""`                                      | `""`                |    `true`    |  `false`  |      `1.0`      | `"Loaded N branch(es) for YYYY-MM."` | `""`            | Populated summaries |
+| **Failed**     | Valid month                       | At least 1 ticked  | `""`                                      | `""`                                      | `""`                |    `true`    |  `false`  |     Fractional     | `"Load failed, previous data kept."` | Exception message | Previous kept       |
