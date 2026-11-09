@@ -123,12 +123,24 @@ classDiagram
     class DelegateCommand {
     }
 
+    class CallerThreadJobs {
+    }
+
+    class FxBackgroundJobs {
+    }
+
+    class ManualJobs {
+    }
+
     ReportView --> ReportViewModel : binds
     ReportViewModel ..> BranchSummary
     ReportViewModel --> BackgroundJobs
     ReportViewModel --> SummarySource
     ReportViewModel --> Command
     DelegateCommand ..|> Command
+    CallerThreadJobs ..|> BackgroundJobs
+    FxBackgroundJobs ..|> BackgroundJobs
+    ManualJobs ..|> BackgroundJobs
 ```
 
 ---
